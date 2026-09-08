@@ -42,7 +42,10 @@ class ResCompanyLdapOperator(models.AbstractModel):
         results = mapping.ldap_id._query(mapping.ldap_id.read()[0], query_string)
         _logger.debug('Performed LDAP query "%s" results: %s', query_string, results)
 
-        return bool(results)
+        # Active Directory appends referral entries without a DN, (None, [...]),
+        # to subtree search results, so a non-empty result is not a match yet.
+        # Only count real entries (same filter as auth_ldap._get_entry).
+        return any(result[0] for result in results)
 
     def safe_ldap_decode(self, attr):
         """Safe LDAP decode; Base64 encode attributes containing binary data.

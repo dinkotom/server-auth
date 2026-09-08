@@ -26,6 +26,10 @@ class FakeLdapConnection:
         pass
 
     def search_st(self, dn, scope, ldap_filter, attributes, timeout):
+        if "referral-only" in ldap_filter:
+            # what Active Directory returns for a subtree search without a
+            # matching entry: no entry, just a referral (dn is None)
+            return [(None, ["ldap://example.com/dc=example,dc=com"])]
         if dn in self.entries:
             return [(dn, dict(self.entries[dn]))]
         return []
@@ -42,6 +46,7 @@ class TestUsersLdapGroups(TransactionCase):
         self.group_contains = self.env["res.groups"].create({"name": "contains"})
         self.group_equals = self.env["res.groups"].create({"name": "equals"})
         self.group_query = self.env["res.groups"].create({"name": "query"})
+        self.group_referral = self.env["res.groups"].create({"name": "referral"})
 
     def _create_ldap_config(self, groups, only_ldap_groups=False):
         vals = {
@@ -141,6 +146,33 @@ class TestUsersLdapGroups(TransactionCase):
         self.assertIn(self.group_contains, groups)
         self.assertIn(self.group_equals, groups)
         self.assertGreater(len(groups), 2)  # user should keep default groups
+
+    def test_users_ldap_groups_query_ignores_referrals(self):
+        self._create_ldap_config(
+            groups=[
+                {
+                    "ldap_attribute": "",
+                    "operator": "query",
+                    "value": "is not run because of patching",
+                    "group_id": self.group_query.id,
+                },
+                {
+                    "ldap_attribute": "",
+                    "operator": "query",
+                    "value": "(memberOf=referral-only)",
+                    "group_id": self.group_referral.id,
+                },
+            ],
+        )
+        with mock.patch(
+            _company_ldap_class + "._connect", return_value=self._fake_connection()
+        ):
+            auth_info = self._authenticate()
+        user = self.env["res.users"].sudo().browse(auth_info["uid"])
+        groups = user.group_ids
+        self.assertIn(self.group_query, groups)
+        # a result consisting of referrals only is not a match
+        self.assertNotIn(self.group_referral, groups)
 
     def test_users_ldap_groups_not_user_type(self):
         self._create_ldap_config(
