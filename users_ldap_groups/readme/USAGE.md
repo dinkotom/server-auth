@@ -9,6 +9,13 @@ potential security issue. It is still the default to prevent losing
 group information by accident. If set to "Yes", you need to make sure
 each user has at least on of the "User types" groups
 
+By default the mappings are only applied when the user is created from
+LDAP (and on every login when "Only LDAP groups" is checked). Check
+"Apply group mappings on every login" to also add the mapped groups to
+existing users each time they log in through LDAP, e.g. when someone is
+added to an LDAP group after their Odoo user already exists. This never
+removes groups.
+
 For active directory, use LDAP attribute 'memberOf' and operator
 'contains'. Fill in the DN of the windows group as value and choose an
 Odoo group users with this windows group are to be assigned to.

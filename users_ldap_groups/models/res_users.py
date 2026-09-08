@@ -17,9 +17,14 @@ class ResUsers(models.Model):
         login = credential["login"]
         user = self.env["res.users"].sudo().browse(auth_info["uid"])
         # check if this user came from ldap, rerun get_or_create_user in
-        # this case to apply ldap groups if necessary
+        # this case to apply ldap groups if necessary: always when the groups
+        # must mirror LDAP (only_ldap_groups), additively when the mappings
+        # are to be applied on every login (apply_groups_on_login)
         ldaps = user.company_id.ldaps
-        if user.active and any(ldaps.mapped("only_ldap_groups")):
+        sync_groups = any(
+            ldap.only_ldap_groups or ldap.apply_groups_on_login for ldap in ldaps
+        )
+        if user.active and sync_groups:
             for conf in ldaps._get_ldap_dicts():
                 entry = ldaps._authenticate(conf, login, credential["password"])
                 if entry:

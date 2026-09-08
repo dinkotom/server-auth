@@ -4,6 +4,7 @@
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl.html).
 from unittest import mock
 
+from odoo import Command
 from odoo.exceptions import UserError
 from odoo.tests.common import TransactionCase
 
@@ -48,7 +49,9 @@ class TestUsersLdapGroups(TransactionCase):
         self.group_query = self.env["res.groups"].create({"name": "query"})
         self.group_referral = self.env["res.groups"].create({"name": "referral"})
 
-    def _create_ldap_config(self, groups, only_ldap_groups=False):
+    def _create_ldap_config(
+        self, groups, only_ldap_groups=False, apply_groups_on_login=False
+    ):
         vals = {
             "company": self.env.ref("base.main_company").id,
             "ldap_base": "dc=users_ldap_groups,dc=example,dc=com",
@@ -56,9 +59,37 @@ class TestUsersLdapGroups(TransactionCase):
             "ldap_binddn": "cn=bind,dc=example,dc=com",
             "create_user": True,
             "only_ldap_groups": only_ldap_groups,
+            "apply_groups_on_login": apply_groups_on_login,
             "group_mapping_ids": [(0, 0, group) for group in groups],
         }
         return self.env["res.company.ldap"].create(vals)
+
+    def _create_existing_user(self):
+        # a user that exists before the LDAP login, with a manually assigned
+        # group and no Odoo password, so authentication falls back to LDAP
+        return (
+            self.env["res.users"]
+            .with_context(no_reset_password=True)
+            .create(
+                {
+                    "name": "Existing user",
+                    "login": CREDENTIAL["login"],
+                    "group_ids": [
+                        Command.set([self.group_user.id, self.group_equals.id])
+                    ],
+                }
+            )
+        )
+
+    def _contains_mapping(self):
+        return [
+            {
+                "ldap_attribute": "name",
+                "operator": "contains",
+                "value": "hello2",
+                "group_id": self.group_contains.id,
+            }
+        ]
 
     def _fake_connection(self, extra=None):
         entry = {"cn": [b"User Name"], "name": [b"hello", b"hello2"]}
@@ -69,7 +100,10 @@ class TestUsersLdapGroups(TransactionCase):
     def _authenticate(self):
         # Odoo 19: authenticate(credential, user_agent_env) - no db argument,
         # and _login works in the current cursor, so no cursor mocking needed.
-        return self.env["res.users"].sudo().authenticate(CREDENTIAL, {})
+        # auth_ldap reads user_agent_env["interactive"] for existing users.
+        return (
+            self.env["res.users"].sudo().authenticate(CREDENTIAL, {"interactive": True})
+        )
 
     def test_users_ldap_groups_only_true(self):
         self._create_ldap_config(
@@ -146,6 +180,32 @@ class TestUsersLdapGroups(TransactionCase):
         self.assertIn(self.group_contains, groups)
         self.assertIn(self.group_equals, groups)
         self.assertGreater(len(groups), 2)  # user should keep default groups
+
+    def test_users_ldap_groups_existing_user_not_synced(self):
+        user = self._create_existing_user()
+        self._create_ldap_config(groups=self._contains_mapping())
+        with mock.patch(
+            _company_ldap_class + "._connect", return_value=self._fake_connection()
+        ):
+            auth_info = self._authenticate()
+        self.assertEqual(auth_info["uid"], user.id)
+        # by default the mappings are only applied when the user is created
+        self.assertNotIn(self.group_contains, user.group_ids)
+        self.assertIn(self.group_equals, user.group_ids)
+
+    def test_users_ldap_groups_apply_on_login(self):
+        user = self._create_existing_user()
+        self._create_ldap_config(
+            groups=self._contains_mapping(), apply_groups_on_login=True
+        )
+        with mock.patch(
+            _company_ldap_class + "._connect", return_value=self._fake_connection()
+        ):
+            auth_info = self._authenticate()
+        self.assertEqual(auth_info["uid"], user.id)
+        self.assertIn(self.group_contains, user.group_ids)
+        # additive: the manually assigned group is kept
+        self.assertIn(self.group_equals, user.group_ids)
 
     def test_users_ldap_groups_query_ignores_referrals(self):
         self._create_ldap_config(

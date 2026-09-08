@@ -29,6 +29,18 @@ class ResCompanyLdap(models.Model):
             "with LDAP groups). If not, manually added groups are preserved."
         ),
     )
+    apply_groups_on_login = fields.Boolean(
+        "Apply group mappings on every login",
+        default=False,
+        help=(
+            "If this is checked, the group mappings are also applied every "
+            "time an existing user logs in through LDAP, so groups granted "
+            "in LDAP later show up in Odoo without recreating the user. "
+            "Groups are only added, never removed (check 'Only LDAP groups' "
+            "for that). If not, the mappings are only applied when the user "
+            "is created."
+        ),
+    )
 
     @api.model
     def _get_or_create_user(self, conf, login, ldap_entry):
